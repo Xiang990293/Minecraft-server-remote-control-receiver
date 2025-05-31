@@ -1,9 +1,47 @@
 import tkinter as tk
 from tkinter.scrolledtext import ScrolledText
+from tkinter import messagebox
 from mcstatus import JavaServer as MinecraftServer
 import threading
 import time
 import subprocess
+import ctypes
+import sys
+import mcrcr_websocket  # 假設你有 websocket.py 模組
+import asyncio
+
+def is_admin():
+    """判斷是否以管理員權限執行（Windows）"""
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except:
+        return False
+    
+def run_as_admin():
+    """以管理員權限重新啟動當前程式"""
+    script = sys.executable
+    params = " ".join([f'"{arg}"' for arg in sys.argv])
+    # 使用 ShellExecuteW 以管理員權限執行
+    try:
+        ctypes.windll.shell32.ShellExecuteW(None, "runas", script, params, None, 1)
+        return True
+    except Exception as e:
+        print(f"無法以管理員權限啟動: {e}")
+        return False
+
+def check_and_restart_with_admin(root):
+    if not is_admin():
+        if messagebox.askyesno("權限不足", "此操作需要管理員權限，是否以管理員身份重新啟動？"):
+            success = run_as_admin()
+            if success:
+                root.destroy()  # 關閉當前視窗，等待新視窗以管理員權限啟動
+                sys.exit(0)
+            else:
+                messagebox.showerror("錯誤", "無法以管理員權限重新啟動程式。")
+        else:
+            messagebox.showwarning("權限不足", "沒有管理員權限，無法啟動伺服器。")
+        return False
+    return True
 
 class ServerConsoleApp:
     def __init__(self, root, server_address="localhost"):
@@ -13,6 +51,10 @@ class ServerConsoleApp:
         # Set the working directory for the Minecraft server process
         self.server_dir = "server"
         self.root.geometry("800x600")
+        self.websocket_server = mcrcr_websocket.websocketserver(self)
+        
+        self.event_loop = asyncio.new_event_loop()
+        threading.Thread(target=self.start_event_loop, daemon=True).start()
         
         
         
@@ -30,7 +72,7 @@ class ServerConsoleApp:
         self.player_list_label = tk.Label(self.left_frame, text="在線玩家: -", font=("Arial", 14), anchor='w', justify='left')
         self.player_list_label.pack(pady=10, anchor='w')
         # 按鈕啟動伺服器（示意，請改成你的啟動指令）
-        self.power_button = tk.Button(self.left_frame, text="啟動伺服器", command=self.toggle_server)
+        self.power_button = tk.Button(self.left_frame, text="啟動伺服器", command= self.toggle_server)
         self.power_button.pack(pady=5)
         
         
@@ -57,6 +99,8 @@ class ServerConsoleApp:
         # 啟動背景執行緒定時更新狀態
         self.process = None
         self.online = False
+        self.websocket_server.start_websocket_server()
+
     def update_status_loop(self):
         while self.process is None or not self.online:
             time.sleep(1) # 等待伺服器啟動
@@ -88,27 +132,34 @@ class ServerConsoleApp:
                 self.process.stdin.write("stop\n")
                 self.process.stdin.flush()
             return
-        self.console_text.delete(1.0, tk.END)  # 清空控制台
-        if self.process is None and not self.online:
-            # 以子程序啟動 Minecraft 伺服器（範例命令，請改成你的啟動指令）
-            command = ["java", "-Xmx12G", "-Xms512M", "-jar", "fabric-server-launcher.jar"]
-            self.process = subprocess.Popen(
-                command,
-                cwd=self.server_dir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.PIPE,
-                text=True,
-                bufsize=1
-            )
+        self.console_text.config(state='normal')
+        self.console_text.delete(1.0, tk.END)
+        self.console_text.config(state='disabled')  # 清空控制台
+        
+        if self.process is None or not self.online:
+            try:
+                # 以子程序啟動 Minecraft 伺服器（範例命令，請改成你的啟動指令）
+                command = ["java", "-Xmx12G", "-Xms512M", "-jar", "fabric-server-launcher.jar"]
+                self.process = subprocess.Popen(
+                    command,
+                    cwd=self.server_dir,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    stdin=subprocess.PIPE,
+                    text=True,
+                    bufsize=1,
+                    encoding='utf-8'
+                )
 
-            # 啟動線程讀取輸出
-            threading.Thread(target=self.read_output, daemon=True).start()
-            threading.Thread(target=self.update_status_loop, daemon=True).start()
-            self.power_button.config(state='disabled')
-            self.status_label.config(text=f"伺服器狀態: 啟動中...")
-            self.player_label.config(text=f"在線玩家數: -")
-            self.player_list_label.config(text=f"在線玩家: -")
+                # 啟動線程讀取輸出
+                threading.Thread(target=self.read_output, daemon=True).start()
+                threading.Thread(target=self.update_status_loop, daemon=True).start()
+                self.power_button.config(state='disabled')
+                self.status_label.config(text=f"伺服器狀態: 啟動中...")
+                self.player_label.config(text=f"在線玩家數: -")
+                self.player_list_label.config(text=f"在線玩家: -")
+            except Exception as e:
+                print(e)
 
     def stop(self):
         self.process = subprocess.run(["stop"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -116,10 +167,14 @@ class ServerConsoleApp:
     def read_output(self):
         for line in self.process.stdout:
             self.append_text(line)
+            asyncio.run_coroutine_threadsafe(self.websocket_server.broadcast({"cmd": "log", "content": line.strip()}), self.event_loop)
             if "Done" in line:
                 self.power_button.config(state='active', text="停止伺服器")
                 self.append_text("[Minecraft 伺服器狀態監控] 伺服器啟動完成\n")
                 self.online = True
+            elif "AccessDeniedException" in line:
+                self.append_text("[Minecraft 伺服器狀態監控] 權限不足，請嘗試以管理員身分啟動app\n")
+                check_and_restart_with_admin(self.root)
             elif "Stopping server" in line:
                 self.append_text("[Minecraft 伺服器狀態監控] 伺服器正在關閉...\n")
                 self.online = False
@@ -141,6 +196,15 @@ class ServerConsoleApp:
             self.console_text.see(tk.END)  # 自動捲動到底部
             self.console_text.config(state='disabled')
         self.root.after(0, update)
+    
+    def start_event_loop(self):
+        """在獨立執行緒中啟動事件迴圈，永久運行"""
+        asyncio.set_event_loop(self.event_loop)
+        self.event_loop.run_forever()
+
+    def stop_event_loop(self):
+        """停止事件迴圈"""
+        self.event_loop.call_soon_threadsafe(self.event_loop.stop)
 
 if __name__ == "__main__":
     root = tk.Tk()
