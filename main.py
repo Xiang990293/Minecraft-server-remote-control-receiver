@@ -9,6 +9,8 @@ import ctypes
 import sys
 import mcrcr_websocket  # 假設你有 websocket.py 模組
 import asyncio
+import requests
+import json
 
 def is_admin():
     """判斷是否以管理員權限執行（Windows）"""
@@ -52,6 +54,7 @@ class ServerConsoleApp:
         self.server_dir = "server"
         self.root.geometry("800x600")
         self.websocket_server = mcrcr_websocket.websocketserver(self)
+        self.file_upload_url = "https://rippou-ripple-web.fly.dev/rippou-ripple-server/survival/upload"
         
         self.event_loop = asyncio.new_event_loop()
         threading.Thread(target=self.start_event_loop, daemon=True).start()
@@ -131,7 +134,7 @@ class ServerConsoleApp:
                 "online": online,
                 "online_player": online_count,
                 "max_player": max_count,
-                "player_list": players
+                "player_list": f"\n{(lambda players: '\n'.join([player.name for player in players]))(players) if online_count>=1 else "無玩家在線"}"
             }
             self.server_status.update({"cmd": "status"})
             asyncio.run_coroutine_threadsafe(self.websocket_server.broadcast(self.server_status), self.event_loop)
