@@ -55,6 +55,12 @@ class ServerConsoleApp:
         
         self.event_loop = asyncio.new_event_loop()
         threading.Thread(target=self.start_event_loop, daemon=True).start()
+        self.server_status = {
+            "online": False,
+            "online_player": 0,
+            "max_player": 20,
+            "player_list": None
+        }
         
         
         
@@ -120,6 +126,15 @@ class ServerConsoleApp:
     def update_labels(self, online, online_count, max_count, players):
         # Tkinter UI 更新必須在主執行緒中執行，使用 after 方法
         def update():
+            self.server_status = {
+                "cmd": "status",
+                "online": online,
+                "online_player": online_count,
+                "max_player": max_count,
+                "player_list": players
+            }
+            self.server_status.update({"cmd": "status"})
+            asyncio.run_coroutine_threadsafe(self.websocket_server.broadcast(self.server_status), self.event_loop)
             self.status_label.config(text=f"伺服器狀態: {'在線' if online else '離線'}")
             self.player_label.config(text=f"在線玩家數: {f"{online_count} / {max_count}" if online else '-' }")
             self.player_list_label.config(text=f"在線玩家:\n{(lambda players: '\n'.join([player.name for player in players]))(players) if online_count>=1 else "無玩家在線"}")
@@ -172,6 +187,8 @@ class ServerConsoleApp:
                 self.power_button.config(state='active', text="停止伺服器")
                 self.append_text("[Minecraft 伺服器狀態監控] 伺服器啟動完成\n")
                 self.online = True
+                self.server_status
+                asyncio.run_coroutine_threadsafe(self.websocket_server.broadcast({"cmd": "log", "content": line.strip()}), self.event_loop)
             elif "AccessDeniedException" in line:
                 self.append_text("[Minecraft 伺服器狀態監控] 權限不足，請嘗試以管理員身分啟動app\n")
                 check_and_restart_with_admin(self.root)

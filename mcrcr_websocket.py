@@ -2,11 +2,17 @@ import asyncio
 import websockets
 import json
 import threading
+import ssl
 
 class websocketserver:
     def __init__(self, app):
         self.app = app # MCRCR
         self.clients = set()
+    
+
+    async def echo(websocket):
+        async for message in websocket:
+            await websocket.send(message)
         
     async def handler(self, websocket):
         
@@ -27,11 +33,8 @@ class websocketserver:
                     continue
                 
                 if cmd == "status":
-                    status = {
-                        "online": self.app.online,
-                        "players": self.app.player_count,
-                        "player_list": self.app.player_list
-                    }
+                    status = self.app.server_status
+                    status.update({"cmd": "status"})
                     await websocket.send(json.dumps(status))
                     continue
 
@@ -49,9 +52,13 @@ class websocketserver:
             self.clients.remove(websocket)
             
             
-    def start_websocket_server(self, host='localhost', port=8765):
+    def start_websocket_server(self, host='0.0.0.0', port=8765):
         async def main():
-            async with websockets.serve(self.handler, host, port):
+            async with websockets.serve(
+                self.handler, 
+                host, 
+                port
+            ):
                 await asyncio.Future()
                 
         threading.Thread(target=asyncio.run, args=(main(),), daemon=True).start()
