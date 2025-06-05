@@ -2,7 +2,7 @@
 這是一個能夠同時架設 Minecraft 伺服器 與 Websocket 伺服器的 App
 
 它需要搭配我的另一個項目使用
-
+https://github.com/Xiang990293/minecraft-server-remote-control
 
 # 安裝方法
 安裝方法非常簡單，先到本 github repo 的 Release 頁面，下載最新版本的可執行檔，即可開始使用。
